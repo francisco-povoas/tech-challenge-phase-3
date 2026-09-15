@@ -25,6 +25,7 @@ Esta versão contempla a evolução da Fase 2 do Tech Challenge, adicionando **c
 - Alembic
 - Pytest + Pytest-asyncio
 - Docker / Docker Compose
+- OpenTelemetry (FastAPI e SQLAlchemy)
 
 ### Infraestrutura e DevOps
 
@@ -36,6 +37,7 @@ Esta versão contempla a evolução da Fase 2 do Tech Challenge, adicionando **c
 - Amazon S3 para Terraform remote state
 - Terraform
 - Kubernetes Deployment, Service, Secret, Job e HPA
+- Jaeger, OpenTelemetry Collector, Prometheus e Grafana
 
 ---
 
@@ -44,7 +46,9 @@ Esta versão contempla a evolução da Fase 2 do Tech Challenge, adicionando **c
 
 A aplicação é empacotada em uma imagem Docker e publicada no **Amazon ECR**. O ambiente de staging roda em **Amazon EKS**, com pods executando a API FastAPI/Uvicorn. O banco de dados PostgreSQL é provisionado no **Amazon RDS** e acessado pela aplicação por meio de variáveis sensíveis armazenadas em **Kubernetes Secrets**.
 
-A API é exposta por um **Service Kubernetes do tipo LoadBalancer**, que provisiona um **AWS Load Balancer** com DNS público. O **HPA** escala os pods automaticamente conforme consumo de CPU.
+A API é exposta pelo **Kong Gateway**, cujo Service `LoadBalancer` provisiona um AWS Load Balancer com DNS público. A FastAPI permanece interna no cluster e o **HPA** escala seus pods conforme consumo de CPU.
+
+Em staging, a API é instrumentada com OpenTelemetry e envia traces e métricas ao Collector no namespace `observability`. O Collector encaminha traces ao Jaeger e expõe métricas para o Prometheus; o Grafana consulta o Prometheus. A API é a única imagem armazenada no ECR: os componentes de observabilidade usam imagens públicas oficiais com versões fixadas.
 
 ![Arquitetura AWS Staging](python-clean-architecture/docs/architecture-staging-aws.jpg)
 
@@ -52,7 +56,7 @@ A API é exposta por um **Service Kubernetes do tipo LoadBalancer**, que provisi
 
 | Recurso | Finalidade |
 |---|---|
-| Amazon ECR | Armazenamento das imagens Docker da aplicação |
+| Amazon ECR | Armazenamento da imagem Docker da aplicação |
 | Amazon EKS | Cluster Kubernetes para execução da API |
 | EKS Node Group | Capacidade computacional para execução dos pods |
 | AWS Load Balancer | Exposição HTTP externa da API |
@@ -64,6 +68,8 @@ A API é exposta por um **Service Kubernetes do tipo LoadBalancer**, que provisi
 | Kubernetes Secret | Variáveis sensíveis da aplicação |
 | Kubernetes Job | Execução de migrations e seed admin |
 | HPA | Escalabilidade automática dos pods |
+| Kong Gateway | Roteamento público e rate limiting por IP |
+| Observabilidade | Jaeger, Collector, Prometheus e Grafana no namespace `observability` |
 
 ---
 
@@ -91,16 +97,7 @@ O projeto utiliza GitHub Actions para validação e deploy do ambiente de stagin
 | `ci.yml` | Pull Request | Executa testes unitários, testes de integração e validação de build |
 | `deploy-staging.yml` | Push na `staging` | Publica imagem no ECR e atualiza o ambiente Kubernetes no EKS |
 
-O deploy em staging executa, em ordem:
-
-1. Build da imagem Docker.
-2. Push da imagem para o Amazon ECR.
-3. Configuração de acesso ao cluster EKS.
-4. Aplicação do namespace e secrets no Kubernetes.
-5. Execução do Job de migrations com Alembic e seed admin.
-6. Aplicação dos manifestos Kubernetes.
-7. Atualização da imagem do Deployment.
-8. Espera do rollout da aplicação.
+O deploy em staging faz build e push da API no ECR, configura o acesso ao EKS, aplica a stack de observabilidade, executa migrations e atualiza a aplicação.
 
 ---
 
@@ -113,7 +110,10 @@ O deploy em staging executa, em ordem:
 │   ├── bootstrap/           # Bucket S3 para remote state do Terraform
 │   └── staging/             # Infraestrutura AWS do ambiente staging
 ├── k8s/
-│   └── staging/             # Manifests Kubernetes do ambiente staging
+│   └── staging/             # API e observabilidade do ambiente staging
+│       ├── observability/   # Jaeger, Collector, Prometheus e Grafana
+│       └── gateway/         # Kong Gateway DB-less
+├── k8s-local/               # Variante local equivalente para Minikube/kind
 ├── python-clean-architecture/
 │   ├── app/
 │   │   ├── api/             # Rotas e controllers
@@ -232,7 +232,7 @@ Os arquivos `.http` ficam em `tests/dev` e podem ser executados com a extensão 
 |---|---|
 | `docker-compose.dev.yml` | Sobe API e banco para desenvolvimento |
 | `docker-compose-unit.yml` | Executa testes unitários |
-| `docker-compose.test.yml` | Executa testes de integração com banco isolado e possui instrumentação opentelemetry para envio de sinais ao coletor que exporta pro jaeger analisar os traces da aplicação|
+| `docker-compose.test.yml` | Executa testes de integração instrumentados e sobe Collector, Jaeger, Prometheus e Grafana |
 
 ---
 
@@ -245,6 +245,36 @@ A infraestrutura foi separada em dois diretórios Terraform:
 infra/bootstrap
 infra/staging
 ```
+
+### Credenciais AWS locais para Terraform
+
+Antes de executar `terraform plan` ou `terraform apply` na sua máquina, o AWS CLI e o provider Terraform precisam de credenciais AWS válidas no ambiente local. Isso é diferente dos secrets do GitHub Actions, usados apenas para o deploy automatizado em CI/CD.
+
+No Linux, o perfil padrão normalmente fica em:
+
+```bash
+~/.aws/credentials
+```
+
+Exemplo:
+
+```ini
+[default]
+aws_access_key_id = SUA_ACCESS_KEY
+aws_secret_access_key = SUA_SECRET_KEY
+aws_session_token = SEU_SESSION_TOKEN
+region = us-east-1
+```
+
+Depois de atualizar essas credenciais, valide a autenticação com:
+
+```bash
+aws sts get-caller-identity
+```
+
+Se o comando retornar o Account ID/ARN, o Terraform pode prosseguir normalmente.
+
+> Em AWS Academy, as credenciais temporárias expiraram quando o laboratório foi reiniciado. Nesse caso, é necessário atualizar novamente o perfil local antes de rodar o provisionamento.
 
 ### 1. Bootstrap
 
@@ -319,6 +349,8 @@ O ambiente `staging` do GitHub Actions utiliza variáveis e secrets para executa
 | `ADMIN_NOME` | Nome do usuário admin criado no seed |
 | `ADMIN_EMAIL` | E-mail do usuário admin |
 | `ADMIN_PASSWORD` | Senha do usuário admin |
+| `JWT_SECRET_KEY` | Chave usada para assinar e validar os JWTs da API |
+| `GRAFANA_ADMIN_PASSWORD` | Senha do administrador do Grafana em staging |
 
 > As credenciais da AWS Academy expiram quando o laboratório é reiniciado. Antes de executar um novo deploy, atualize os secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e `AWS_SESSION_TOKEN`.
 
@@ -326,7 +358,7 @@ O ambiente `staging` do GitHub Actions utiliza variáveis e secrets para executa
 
 ## Deploy em Kubernetes
 
-O deploy em staging é feito automaticamente pelo workflow `deploy-staging.yml` quando há push na branch `staging`.
+O deploy em staging é feito automaticamente pelo workflow `deploy-staging.yml` quando há push na branch `staging`. Antes de implantar a API, o workflow aplica Kong no namespace `gateway` e a observabilidade no namespace `observability`.
 
 Para disparar um novo deploy sem alterar código:
 
@@ -342,6 +374,8 @@ kubectl get pods -n staging -o wide
 kubectl get deployment mvp-oficina-api -n staging -o wide
 kubectl get svc -n staging -o wide
 kubectl get hpa -n staging
+kubectl get pods,svc -n gateway
+kubectl get pods,svc -n observability
 ```
 
 Verificar a imagem em execução:
@@ -361,6 +395,16 @@ Logs do Job de migrations:
 ```bash
 kubectl logs -n staging job/mvp-oficina-api-migrations
 ```
+
+Para consultar traces e métricas, obtenha os endereços externos restritos ao IP configurado nos Services:
+
+```bash
+kubectl get svc jaeger-ui grafana -n observability
+kubectl logs -n observability deployment/otel-collector --tail=100
+kubectl get svc kong-proxy -n gateway
+```
+
+O Grafana usa o secret `GRAFANA_ADMIN_PASSWORD` do environment `staging`; Prometheus e o endpoint OTLP do Collector permanecem internos ao cluster. Veja [k8s/staging/observability/README.md](k8s/staging/observability/README.md) para o deploy manual da stack.
 
 ---
 
@@ -399,6 +443,8 @@ kubectl delete -f k8s/staging/03-deployment.yaml --ignore-not-found
 kubectl delete job mvp-oficina-api-migrations -n staging --ignore-not-found
 kubectl delete secret mvp-oficina-api-secrets -n staging --ignore-not-found
 kubectl delete namespace staging --ignore-not-found
+kubectl delete namespace gateway --ignore-not-found
+kubectl delete namespace observability --ignore-not-found
 ```
 
 Depois destrua a infraestrutura do staging:
@@ -423,7 +469,7 @@ terraform destroy
 - Adicionar rollback automático no workflow de deploy.
 - Incluir API Gateway para autenticação centralizada, rate limiting e versionamento de APIs.
 - Criar lifecycle policy no ECR para remoção automática de imagens antigas.
-- Evoluir observabilidade com métricas, traces e dashboards.
+- Adicionar persistência para traces, métricas e dashboards.
 
 ---
 
@@ -432,6 +478,8 @@ terraform destroy
 As principais decisões arquiteturais do projeto estão registradas em ADRs na pasta [`docs/adr`](docs/adr).
 
 - [ADR 1: Uso do PostgreSQL como banco de dados](docs/adr/0001-uso-do-postgresql.md)
+
+O modelo relacional da solução também foi documentado e está disponível em [python-clean-architecture/docs/modelo_relacional_ordem_servico.md](python-clean-architecture/docs/modelo_relacional_ordem_servico.md).
 
 ---
 

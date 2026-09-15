@@ -3,7 +3,7 @@ project_name        = "mvp-oficina"
 environment         = "staging"
 ecr_repository_name = "mvp-oficina-api"
 db_password = "uma-senha-forte-aqui"
-eks_version = "1.30"
+eks_version = "1.35"
 
 eks_node_instance_types = ["t3.small"]
 eks_node_desired_size   = 1

@@ -1,0 +1,34 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: mvp-oficina-api
+    url: http://mvp-oficina-api-service.staging.svc.cluster.local:80
+    routes:
+      - name: authentication
+        paths:
+          - /api/v1/auth
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 5
+              policy: local
+              limit_by: ip
+      - name: api
+        paths:
+          - /api/v1
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 60
+              policy: local
+              limit_by: ip
+      - name: public-documentation
+        paths:
+          - /health-check
+          - /docs
+          - /redoc
+          - /openapi.json
+        strip_path: false

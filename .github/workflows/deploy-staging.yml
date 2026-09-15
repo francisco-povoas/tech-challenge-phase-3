@@ -62,6 +62,14 @@ jobs:
             --region "$AWS_REGION" \
             --name "$EKS_CLUSTER_NAME"
 
+      - name: Deploy Kong gateway
+        run: bash k8s/staging/gateway/apply.sh
+
+      - name: Deploy observability
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: bash k8s/staging/observability/apply.sh
+
       - name: Install envsubst
         run: |
           sudo apt-get update
@@ -78,6 +86,7 @@ jobs:
           ADMIN_NOME: ${{ secrets.ADMIN_NOME }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
         run: |
           kubectl create secret generic mvp-oficina-api-secrets \
             --namespace "$K8S_NAMESPACE" \
@@ -86,6 +95,7 @@ jobs:
             --from-literal=ADMIN_NOME="$ADMIN_NOME" \
             --from-literal=ADMIN_EMAIL="$ADMIN_EMAIL" \
             --from-literal=ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+            --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY" \
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
@@ -154,3 +164,11 @@ jobs:
           echo ""
           echo "### HPA"
           kubectl get hpa -n "$K8S_NAMESPACE"
+
+          echo ""
+          echo "### Observability"
+          kubectl get pods,svc -n observability -o wide
+
+          echo ""
+          echo "### Gateway"
+          kubectl get pods,svc -n gateway -o wide

@@ -1,11 +1,12 @@
 # Kubernetes local
 
-Este ambiente sobe a API e PostgreSQL no namespace `local`, e Jaeger, OpenTelemetry
-Collector, Prometheus e Grafana no namespace `observability`.
+Este ambiente sobe a API e PostgreSQL no namespace `local`, Kong no namespace
+`gateway`, e Jaeger, OpenTelemetry Collector, Prometheus e Grafana no namespace
+`observability`.
 
 ```text
-FastAPI → OTel Collector → Jaeger
-                     └──→ Prometheus → Grafana
+Cliente → Kong → FastAPI → OTel Collector → Jaeger
+                                      └──→ Prometheus → Grafana
 ```
 
 ## Subir o ambiente
@@ -29,6 +30,7 @@ os respectivos rollouts terminarem.
 
 ```bash
 ./k8s-local/observability/apply.sh
+./k8s-local/gateway/apply.sh
 ```
 
 Depois suba a aplicação:
@@ -53,10 +55,10 @@ para `otel-collector.observability.svc.cluster.local:4317`.
 
 ## Acessar e validar
 
-Todos os UIs locais usam `NodePort`; não é necessário `kubectl port-forward`.
+Kong e todos os UIs locais usam `NodePort`; não é necessário `kubectl port-forward`.
 
 ```bash
-minikube service mvp-oficina-api-service -n local --url
+minikube service kong-proxy -n gateway --url
 minikube service jaeger -n observability --url
 minikube service prometheus -n observability --url
 minikube service grafana -n observability --url
@@ -65,7 +67,7 @@ minikube service grafana -n observability --url
 Gere um trace e, na UI do Jaeger, procure pelo serviço `mvp-oficina-api`:
 
 ```bash
-curl "$(minikube service mvp-oficina-api-service -n local --url)/health-check"
+curl "$(minikube service kong-proxy -n gateway --url)/health-check"
 ```
 
 Grafana: usuário `admin`, senha `admin`. O datasource Prometheus e o dashboard
@@ -75,9 +77,11 @@ Grafana: usuário `admin`, senha `admin`. O datasource Prometheus e o dashboard
 
 ```bash
 kubectl get pods,svc -n local
+kubectl get pods,svc -n gateway
 kubectl get pods,svc -n observability
 kubectl logs -f -n observability deployment/otel-collector
 kubectl logs -n local deployment/mvp-oficina-api
+kubectl logs -n gateway deployment/kong
 ```
 
 Após editar `k8s-local/observability/otel-collector-config.yaml`, reaplique a
@@ -88,8 +92,15 @@ stack e reinicie o Collector para que ele leia a configuração nova:
 kubectl rollout restart deployment/otel-collector -n observability
 ```
 
+Após editar `k8s-local/gateway/kong.yaml`, reaplique e reinicie o Kong:
+
+```bash
+./k8s-local/gateway/apply.sh
+kubectl rollout restart deployment/kong -n gateway
+```
+
 Para remover o ambiente:
 
 ```bash
-kubectl delete namespace local observability
+kubectl delete namespace local gateway observability
 ```

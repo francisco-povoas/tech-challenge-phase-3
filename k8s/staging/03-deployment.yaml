@@ -26,12 +26,38 @@ spec:
           image: 706619443268.dkr.ecr.us-east-1.amazonaws.com/mvp-oficina-api:bf60ca2dabb7e63402513d2ceff0f1a3de0c7f4c
           imagePullPolicy: IfNotPresent
 
+          command:
+            - opentelemetry-instrument
+            - uvicorn
+            - app.main:create_app
+            - --factory
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+
           ports:
             - containerPort: 8000
 
           envFrom:
             - secretRef:
                 name: mvp-oficina-api-secrets
+
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: mvp-oficina-api
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            - name: OTEL_TRACES_EXPORTER
+              value: otlp
+            - name: OTEL_METRICS_EXPORTER
+              value: otlp
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "5000"
+            - name: OTEL_LOGS_EXPORTER
+              value: none
 
           resources:
             requests:
