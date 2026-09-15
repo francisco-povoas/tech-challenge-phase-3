@@ -333,7 +333,7 @@ O ambiente `staging` do GitHub Actions utiliza variáveis e secrets para executa
 | Variável | Exemplo |
 |---|---|
 | `AWS_REGION` | `us-east-1` |
-| `AWS_ACCOUNT_ID` | `706619443268` |
+| Conta AWS | Obtida automaticamente das credenciais com `aws sts get-caller-identity` |
 | `ECR_REPOSITORY` | `mvp-oficina-api` |
 | `EKS_CLUSTER_NAME` | `mvp-oficina-staging-cluster` |
 | `K8S_NAMESPACE` | `staging` |

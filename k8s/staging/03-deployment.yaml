@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: mvp-oficina-api
-          image: 706619443268.dkr.ecr.us-east-1.amazonaws.com/mvp-oficina-api:bf60ca2dabb7e63402513d2ceff0f1a3de0c7f4c
+          image: ${IMAGE_URI}
           imagePullPolicy: IfNotPresent
 
           command:
