@@ -179,3 +179,4 @@ jobs:
           echo ""
           echo "### Gateway"
           kubectl get pods,svc -n gateway -o wide
+
