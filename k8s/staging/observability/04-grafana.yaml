@@ -1,3 +1,119 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: observability
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+
+  observabilidade-api-dashboard.json: |
+    {
+      "annotations": { "list": [] },
+      "panels": [
+        {
+          "id": 1,
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 6 },
+          "title": "P95 - Latência da autenticação",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{http_target=\"/api/v1/auth/token\",http_method=\"POST\"}[5m])) by (le))",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 6 },
+          "title": "P99 - Latência da autenticação",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(http_server_duration_milliseconds_bucket{http_target=\"/api/v1/auth/token\",http_method=\"POST\"}[5m])) by (le))",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "gridPos": { "x": 0, "y": 6, "w": 12, "h": 5 },
+          "title": "Requisições de autenticação por segundo",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_duration_milliseconds_count{http_target=\"/api/v1/auth/token\",http_method=\"POST\"}[1m]))",
+              "refId": "A",
+              "legendFormat": "req/s"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "gridPos": { "x": 12, "y": 6, "w": 12, "h": 5 },
+          "title": "Total acumulado de autenticações (1h)",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(increase(http_server_duration_milliseconds_count{http_target=\"/api/v1/auth/token\",http_method=\"POST\"}[1h]))",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "gridPos": { "x": 0, "y": 11, "w": 12, "h": 5 },
+          "title": "Erros de autenticação por segundo",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_duration_milliseconds_count{http_target=\"/api/v1/auth/token\",http_method=\"POST\", http_status_code=~\"4..|5..\"}[1m]))",
+              "refId": "A",
+              "legendFormat": "errors/s"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "gridPos": { "x": 12, "y": 11, "w": 12, "h": 5 },
+          "title": "Requisições HTTP ativas",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(http_server_active_requests)",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "gridPos": { "x": 0, "y": 16, "w": 24, "h": 5 },
+          "title": "Conexões DB em uso",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(db_client_connections_usage{state=\"used\"})",
+              "refId": "A"
+            }
+          ]
+        }
+      ],
+      "templating": { "list": [] },
+      "id": null,
+      "title": "Observabilidade - API Oficina",
+      "uid": "observ-api",
+      "version": 1,
+      "schemaVersion": 30,
+      "time": { "from": "now-1h", "to": "now" }
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,6 +156,12 @@ spec:
               mountPath: /etc/grafana/provisioning/datasources/prometheus.yaml
               subPath: prometheus.yaml
               readOnly: true
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -51,6 +173,18 @@ spec:
         - name: datasource
           configMap:
             name: grafana-datasource
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboards
+            items:
+              - key: provider.yaml
+                path: provider.yaml
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+            items:
+              - key: observabilidade-api-dashboard.json
+                path: observabilidade-api-dashboard.json
 ---
 apiVersion: v1
 kind: Service
